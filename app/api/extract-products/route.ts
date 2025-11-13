@@ -46,14 +46,40 @@ export async function POST(request: NextRequest) {
     // Importar pdf-parse v2 - mesma abordagem do script CLI que funciona
     // Usar import dinâmico para evitar problemas de bundling no Next.js
     // No ambiente Node.js do Next.js, desabilitar worker para evitar erros
-    const pdfParseModule = await import('pdf-parse');
+    let PDFParse: any;
     
-    // Verificar se PDFParse está disponível
-    if (!pdfParseModule || !pdfParseModule.PDFParse) {
-      throw new Error('PDFParse não está disponível. Verifique a instalação do pdf-parse.');
+    try {
+      const pdfParseModule = await import('pdf-parse');
+      console.log('pdf-parse module loaded:', {
+        hasModule: !!pdfParseModule,
+        keys: Object.keys(pdfParseModule || {}),
+      });
+      
+      // Verificar se PDFParse está disponível
+      if (!pdfParseModule) {
+        throw new Error('Módulo pdf-parse não foi carregado');
+      }
+      
+      // Tentar diferentes formas de importação
+      if (pdfParseModule.PDFParse) {
+        PDFParse = pdfParseModule.PDFParse;
+      } else {
+        // Tentar acessar default com type assertion
+        const moduleWithDefault = pdfParseModule as any;
+        if (moduleWithDefault.default?.PDFParse) {
+          PDFParse = moduleWithDefault.default.PDFParse;
+        } else if (moduleWithDefault.default && typeof moduleWithDefault.default === 'function') {
+          PDFParse = moduleWithDefault.default;
+        } else {
+          throw new Error(`PDFParse não encontrado no módulo. Chaves disponíveis: ${Object.keys(pdfParseModule).join(', ')}`);
+        }
+      }
+      
+      console.log('PDFParse class loaded:', typeof PDFParse);
+    } catch (importError: any) {
+      console.error('Erro ao importar pdf-parse:', importError);
+      throw new Error(`Erro ao importar pdf-parse: ${importError.message}`);
     }
-    
-    const { PDFParse } = pdfParseModule;
     
     // Desabilitar worker no ambiente Node.js usando variável de ambiente
     // Isso força o pdf-parse a usar modo síncrono que não requer worker
@@ -91,11 +117,21 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error('Erro ao processar PDF:', error);
     console.error('Stack:', error.stack);
+    console.error('Error name:', error?.name);
+    console.error('Error message:', error?.message);
+    
+    // Retornar mais informações sobre o erro para debug
     return NextResponse.json(
       { 
         error: 'Erro ao processar PDF',
-        message: error.message,
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        message: error?.message || 'Erro desconhecido',
+        name: error?.name,
+        // Sempre retornar stack em produção para debug inicial
+        stack: error?.stack,
+        details: process.env.NODE_ENV === 'development' ? {
+          type: typeof error,
+          keys: Object.keys(error || {}),
+        } : undefined
       },
       { status: 500 }
     );
