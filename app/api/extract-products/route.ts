@@ -47,77 +47,95 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Importar pdf-parse v2 - mesma abordagem do script CLI que funciona
-    // Usar import dinâmico para evitar problemas de bundling no Next.js
-    // No ambiente Node.js do Next.js, desabilitar worker para evitar erros
-    let PDFParse: any;
+    // Usar pdfjs-dist que funciona melhor em ambientes serverless
+    // Importar dinamicamente para evitar problemas de bundling
+    let extractedText: string;
     
     try {
-      const pdfParseModule = await import('pdf-parse');
-      console.log('pdf-parse module loaded:', {
-        hasModule: !!pdfParseModule,
-        keys: Object.keys(pdfParseModule || {}),
+      // Importar pdfjs-dist - usar build legacy que funciona melhor em Node.js
+      // @ts-ignore - pdfjs-dist pode não ter tipos completos
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs' as any);
+      
+      // Configurar para não usar worker (necessário em serverless)
+      if (pdfjs.GlobalWorkerOptions) {
+        pdfjs.GlobalWorkerOptions.workerSrc = '';
+      }
+      
+      // Carregar o documento PDF
+      const loadingTask = pdfjs.getDocument({
+        data: pdfBuffer,
+        useSystemFonts: true,
+        verbosity: 0, // Reduzir logs
       });
       
-      // Verificar se PDFParse está disponível
-      if (!pdfParseModule) {
-        throw new Error('Módulo pdf-parse não foi carregado');
+      const pdfDocument = await loadingTask.promise;
+      const numPages = pdfDocument.numPages;
+      
+      // Extrair texto de todas as páginas
+      let fullText = '';
+      
+      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+        const page = await pdfDocument.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        
+        // Concatenar texto de todas as páginas
+        const pageText = textContent.items
+          .map((item: any) => item.str)
+          .join(' ');
+        
+        fullText += pageText + '\n';
       }
       
-      // Tentar diferentes formas de importação
-      if (pdfParseModule.PDFParse) {
-        PDFParse = pdfParseModule.PDFParse;
-      } else {
-        // Tentar acessar default com type assertion
-        const moduleWithDefault = pdfParseModule as any;
-        if (moduleWithDefault.default?.PDFParse) {
-          PDFParse = moduleWithDefault.default.PDFParse;
-        } else if (moduleWithDefault.default && typeof moduleWithDefault.default === 'function') {
-          PDFParse = moduleWithDefault.default;
-        } else {
-          throw new Error(`PDFParse não encontrado no módulo. Chaves disponíveis: ${Object.keys(pdfParseModule).join(', ')}`);
+      extractedText = fullText;
+      console.log('Texto extraído com sucesso, tamanho:', extractedText.length);
+      
+    } catch (pdfError: any) {
+      console.error('Erro ao processar PDF com pdfjs-dist:', pdfError);
+      
+      // Fallback: tentar usar pdf-parse se pdfjs-dist falhar
+      try {
+        console.log('Tentando fallback com pdf-parse...');
+        const pdfParseModule = await import('pdf-parse');
+        
+        if (!pdfParseModule || !pdfParseModule.PDFParse) {
+          throw new Error('PDFParse não disponível no módulo');
         }
+        
+        const { PDFParse } = pdfParseModule;
+        const originalEnv = process.env.PDFJS_DISABLE_WORKER;
+        process.env.PDFJS_DISABLE_WORKER = 'true';
+        
+        try {
+          const parser = new PDFParse({ data: pdfBuffer });
+          const result = await parser.getText();
+          await parser.destroy();
+          extractedText = result.text;
+          
+          if (originalEnv !== undefined) {
+            process.env.PDFJS_DISABLE_WORKER = originalEnv;
+          } else {
+            delete process.env.PDFJS_DISABLE_WORKER;
+          }
+        } catch (parseError: any) {
+          if (originalEnv !== undefined) {
+            process.env.PDFJS_DISABLE_WORKER = originalEnv;
+          } else {
+            delete process.env.PDFJS_DISABLE_WORKER;
+          }
+          throw parseError;
+        }
+      } catch (fallbackError: any) {
+        throw new Error(`Erro ao processar PDF: ${pdfError.message}. Fallback também falhou: ${fallbackError.message}`);
       }
-      
-      console.log('PDFParse class loaded:', typeof PDFParse);
-    } catch (importError: any) {
-      console.error('Erro ao importar pdf-parse:', importError);
-      throw new Error(`Erro ao importar pdf-parse: ${importError.message}`);
     }
     
-    // Desabilitar worker no ambiente Node.js usando variável de ambiente
-    // Isso força o pdf-parse a usar modo síncrono que não requer worker
-    const originalEnv = process.env.PDFJS_DISABLE_WORKER;
-    process.env.PDFJS_DISABLE_WORKER = 'true';
-    
-    try {
-      const parser = new PDFParse({ data: pdfBuffer });
-      const result = await parser.getText();
-      await parser.destroy();
-      
-      // Restaurar variável de ambiente
-      if (originalEnv !== undefined) {
-        process.env.PDFJS_DISABLE_WORKER = originalEnv;
-      } else {
-        delete process.env.PDFJS_DISABLE_WORKER;
-      }
-      
-      const products = extractProductsFromText(result.text);
+    const products = extractProductsFromText(extractedText);
 
       return NextResponse.json({
         success: true,
         products,
-        text: result.text,
+        text: extractedText,
       });
-    } catch (error: any) {
-      // Restaurar variável de ambiente em caso de erro
-      if (originalEnv !== undefined) {
-        process.env.PDFJS_DISABLE_WORKER = originalEnv;
-      } else {
-        delete process.env.PDFJS_DISABLE_WORKER;
-      }
-      throw error;
-    }
   } catch (error: any) {
     console.error('Erro ao processar PDF:', error);
     console.error('Stack:', error.stack);
