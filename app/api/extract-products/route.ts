@@ -13,8 +13,6 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File;
     const filePath = formData.get('filePath') as string;
 
-    console.log('formData request:', formData);
-
     if (!file && !filePath) {
       return NextResponse.json(
         { error: 'Nenhum arquivo fornecido' },
@@ -27,9 +25,7 @@ export async function POST(request: NextRequest) {
     if (file) {
       // arquivo enviado via upload
       const arrayBuffer = await file.arrayBuffer();
-      console.log('arrayBuffer:', arrayBuffer);
       pdfBuffer = Buffer.from(arrayBuffer);
-      console.log('pdfBuffer: ------------------------', pdfBuffer);
     } else if (filePath) {
       // caminho do arquivo no servidor
       const fullPath = path.join(process.cwd(), filePath);
@@ -47,89 +43,62 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Usar pdfjs-dist que funciona melhor em ambientes serverless
+    // Usar pdf-parse diretamente (funciona localmente e deve funcionar na Vercel com configurações corretas)
     // Importar dinamicamente para evitar problemas de bundling
     let extractedText: string;
     
     try {
-      // Importar pdfjs-dist - usar build legacy que funciona melhor em Node.js
-      // @ts-ignore - pdfjs-dist pode não ter tipos completos
-      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs' as any);
+      console.log('Importando pdf-parse...');
+      const pdfParseModule = await import('pdf-parse');
       
-      // Configurar para não usar worker (necessário em serverless)
-      if (pdfjs.GlobalWorkerOptions) {
-        pdfjs.GlobalWorkerOptions.workerSrc = '';
+      if (!pdfParseModule) {
+        throw new Error('Módulo pdf-parse não foi carregado');
       }
       
-      // Converter Buffer para Uint8Array (pdfjs-dist requer Uint8Array, não Buffer)
-      const uint8Array = new Uint8Array(pdfBuffer);
-      
-      // Carregar o documento PDF
-      const loadingTask = pdfjs.getDocument({
-        data: uint8Array,
-        useSystemFonts: true,
-        verbosity: 0, // Reduzir logs
-      });
-      
-      const pdfDocument = await loadingTask.promise;
-      const numPages = pdfDocument.numPages;
-      
-      // Extrair texto de todas as páginas
-      let fullText = '';
-      
-      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-        const page = await pdfDocument.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        
-        // Concatenar texto de todas as páginas
-        const pageText = textContent.items
-          .map((item: any) => item.str)
-          .join(' ');
-        
-        fullText += pageText + '\n';
+      // Verificar se PDFParse está disponível
+      if (!pdfParseModule.PDFParse) {
+        throw new Error('PDFParse não está disponível no módulo pdf-parse');
       }
       
-      extractedText = fullText;
-      console.log('Texto extraído com sucesso, tamanho:', extractedText.length);
+      const { PDFParse } = pdfParseModule;
+      console.log('PDFParse carregado com sucesso');
       
-    } catch (pdfError: any) {
-      console.error('Erro ao processar PDF com pdfjs-dist:', pdfError);
+      // Configurar variáveis de ambiente para desabilitar worker (necessário em serverless)
+      const originalWorkerEnv = process.env.PDFJS_DISABLE_WORKER;
+      const originalNodeEnv = process.env.NODE_ENV;
       
-      // Fallback: tentar usar pdf-parse se pdfjs-dist falhar
+      // Forçar desabilitar worker para ambiente serverless
+      process.env.PDFJS_DISABLE_WORKER = 'true';
+      
       try {
-        console.log('Tentando fallback com pdf-parse...');
-        const pdfParseModule = await import('pdf-parse');
+        console.log('Criando parser PDF...');
+        const parser = new PDFParse({ data: pdfBuffer });
         
-        if (!pdfParseModule || !pdfParseModule.PDFParse) {
-          throw new Error('PDFParse não disponível no módulo');
+        console.log('Extraindo texto do PDF...');
+        const result = await parser.getText();
+        
+        console.log('Texto extraído, tamanho:', result.text?.length || 0);
+        
+        await parser.destroy();
+        extractedText = result.text || '';
+        
+        console.log('PDF processado com sucesso');
+      } finally {
+        // Restaurar variáveis de ambiente
+        if (originalWorkerEnv !== undefined) {
+          process.env.PDFJS_DISABLE_WORKER = originalWorkerEnv;
+        } else {
+          delete process.env.PDFJS_DISABLE_WORKER;
         }
-        
-        const { PDFParse } = pdfParseModule;
-        const originalEnv = process.env.PDFJS_DISABLE_WORKER;
-        process.env.PDFJS_DISABLE_WORKER = 'true';
-        
-        try {
-          const parser = new PDFParse({ data: pdfBuffer });
-          const result = await parser.getText();
-          await parser.destroy();
-          extractedText = result.text;
-          
-          if (originalEnv !== undefined) {
-            process.env.PDFJS_DISABLE_WORKER = originalEnv;
-          } else {
-            delete process.env.PDFJS_DISABLE_WORKER;
-          }
-        } catch (parseError: any) {
-          if (originalEnv !== undefined) {
-            process.env.PDFJS_DISABLE_WORKER = originalEnv;
-          } else {
-            delete process.env.PDFJS_DISABLE_WORKER;
-          }
-          throw parseError;
-        }
-      } catch (fallbackError: any) {
-        throw new Error(`Erro ao processar PDF: ${pdfError.message}. Fallback também falhou: ${fallbackError.message}`);
       }
+    } catch (error: any) {
+      console.error('Erro detalhado ao processar PDF:', {
+        message: error?.message,
+        name: error?.name,
+        stack: error?.stack,
+        code: error?.code,
+      });
+      throw new Error(`Erro ao processar PDF: ${error?.message || 'Erro desconhecido'}`);
     }
     
     const products = extractProductsFromText(extractedText);
