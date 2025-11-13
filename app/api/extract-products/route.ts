@@ -3,6 +3,10 @@ import fs from 'fs';
 import path from 'path';
 import { extractProductsFromText } from '@/lib/pdf-extractor';
 
+// Configurar runtime para Vercel
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -43,6 +47,12 @@ export async function POST(request: NextRequest) {
     // Usar import dinâmico para evitar problemas de bundling no Next.js
     // No ambiente Node.js do Next.js, desabilitar worker para evitar erros
     const pdfParseModule = await import('pdf-parse');
+    
+    // Verificar se PDFParse está disponível
+    if (!pdfParseModule || !pdfParseModule.PDFParse) {
+      throw new Error('PDFParse não está disponível. Verifique a instalação do pdf-parse.');
+    }
+    
     const { PDFParse } = pdfParseModule;
     
     // Desabilitar worker no ambiente Node.js usando variável de ambiente
