@@ -43,46 +43,65 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Usar pdf-parse diretamente (funciona localmente e deve funcionar na Vercel com configurações corretas)
-    // Importar dinamicamente para evitar problemas de bundling
+    // Usar pdf-parse com configurações específicas para Vercel serverless
+    // O pdf-parse v2 pode ter problemas com workers em ambientes serverless
     let extractedText: string;
     
     try {
-      console.log('Importando pdf-parse...');
-      const pdfParseModule = await import('pdf-parse');
-      
-      if (!pdfParseModule) {
-        throw new Error('Módulo pdf-parse não foi carregado');
-      }
-      
-      // Verificar se PDFParse está disponível
-      if (!pdfParseModule.PDFParse) {
-        throw new Error('PDFParse não está disponível no módulo pdf-parse');
-      }
-      
-      const { PDFParse } = pdfParseModule;
-      console.log('PDFParse carregado com sucesso');
-      
-      // Configurar variáveis de ambiente para desabilitar worker (necessário em serverless)
+      // Configurar variáveis de ambiente ANTES de importar o módulo
+      // Isso é crítico para o pdf-parse funcionar em serverless
       const originalWorkerEnv = process.env.PDFJS_DISABLE_WORKER;
-      const originalNodeEnv = process.env.NODE_ENV;
-      
-      // Forçar desabilitar worker para ambiente serverless
       process.env.PDFJS_DISABLE_WORKER = 'true';
       
+      // Também desabilitar outras opções que podem causar problemas
+      process.env.NODE_OPTIONS = process.env.NODE_OPTIONS || '';
+      
       try {
-        console.log('Criando parser PDF...');
+        console.log('[1/5] Importando pdf-parse...');
+        const pdfParseModule = await import('pdf-parse');
+        
+        if (!pdfParseModule) {
+          throw new Error('Módulo pdf-parse não foi carregado');
+        }
+        
+        console.log('[2/5] Módulo carregado, verificando PDFParse...');
+        console.log('Chaves do módulo:', Object.keys(pdfParseModule));
+        
+        // Tentar diferentes formas de acessar PDFParse
+        let PDFParse: any;
+        
+        if (pdfParseModule.PDFParse) {
+          PDFParse = pdfParseModule.PDFParse;
+          console.log('[3/5] PDFParse encontrado via .PDFParse');
+        } else if ((pdfParseModule as any).default?.PDFParse) {
+          PDFParse = (pdfParseModule as any).default.PDFParse;
+          console.log('[3/5] PDFParse encontrado via .default.PDFParse');
+        } else if ((pdfParseModule as any).default && typeof (pdfParseModule as any).default === 'function') {
+          PDFParse = (pdfParseModule as any).default;
+          console.log('[3/5] PDFParse encontrado via .default (função)');
+        } else {
+          throw new Error(`PDFParse não encontrado. Chaves disponíveis: ${Object.keys(pdfParseModule).join(', ')}`);
+        }
+        
+        if (!PDFParse) {
+          throw new Error('PDFParse é undefined após tentativas de importação');
+        }
+        
+        console.log('[4/5] Criando parser com buffer de tamanho:', pdfBuffer.length);
         const parser = new PDFParse({ data: pdfBuffer });
         
-        console.log('Extraindo texto do PDF...');
+        console.log('[5/5] Extraindo texto...');
         const result = await parser.getText();
         
-        console.log('Texto extraído, tamanho:', result.text?.length || 0);
+        console.log('Texto extraído com sucesso! Tamanho:', result?.text?.length || 0);
         
         await parser.destroy();
-        extractedText = result.text || '';
+        extractedText = result?.text || '';
         
-        console.log('PDF processado com sucesso');
+        if (!extractedText || extractedText.length === 0) {
+          throw new Error('Nenhum texto foi extraído do PDF');
+        }
+        
       } finally {
         // Restaurar variáveis de ambiente
         if (originalWorkerEnv !== undefined) {
@@ -92,13 +111,18 @@ export async function POST(request: NextRequest) {
         }
       }
     } catch (error: any) {
-      console.error('Erro detalhado ao processar PDF:', {
+      console.error('❌ Erro detalhado ao processar PDF:', {
         message: error?.message,
         name: error?.name,
-        stack: error?.stack,
+        stack: error?.stack?.substring(0, 500), // Limitar stack para não exceder limites
         code: error?.code,
+        errno: error?.errno,
+        syscall: error?.syscall,
       });
-      throw new Error(`Erro ao processar PDF: ${error?.message || 'Erro desconhecido'}`);
+      
+      // Re-throw com mensagem mais clara
+      const errorMessage = error?.message || 'Erro desconhecido ao processar PDF';
+      throw new Error(`Erro ao processar PDF: ${errorMessage}`);
     }
     
     const products = extractProductsFromText(extractedText);
