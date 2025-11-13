@@ -13,6 +13,8 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File;
     const filePath = formData.get('filePath') as string;
 
+    console.log('formData request:', formData);
+
     if (!file && !filePath) {
       return NextResponse.json(
         { error: 'Nenhum arquivo fornecido' },
@@ -25,7 +27,9 @@ export async function POST(request: NextRequest) {
     if (file) {
       // arquivo enviado via upload
       const arrayBuffer = await file.arrayBuffer();
+      console.log('arrayBuffer:', arrayBuffer);
       pdfBuffer = Buffer.from(arrayBuffer);
+      console.log('pdfBuffer: ------------------------', pdfBuffer);
     } else if (filePath) {
       // caminho do arquivo no servidor
       const fullPath = path.join(process.cwd(), filePath);
