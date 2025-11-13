@@ -61,9 +61,12 @@ export async function POST(request: NextRequest) {
         pdfjs.GlobalWorkerOptions.workerSrc = '';
       }
       
+      // Converter Buffer para Uint8Array (pdfjs-dist requer Uint8Array, não Buffer)
+      const uint8Array = new Uint8Array(pdfBuffer);
+      
       // Carregar o documento PDF
       const loadingTask = pdfjs.getDocument({
-        data: pdfBuffer,
+        data: uint8Array,
         useSystemFonts: true,
         verbosity: 0, // Reduzir logs
       });
