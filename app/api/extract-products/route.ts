@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { extractProductsFromText } from '@/lib/pdf-extractor';
+import { extractPDFSections, extractProductsFromText, ExtractedPDFData } from '@/lib/pdf-extractor';
 
 // Configurar runtime para Vercel
 export const runtime = 'nodejs';
@@ -125,13 +125,25 @@ export async function POST(request: NextRequest) {
       throw new Error(`Erro ao processar PDF: ${errorMessage}`);
     }
     
+    // Extrair todas as seções do PDF
+    const sections = extractPDFSections(extractedText);
+    
+    // Extrair produtos (por enquanto vazio, padrões comentados)
     const products = extractProductsFromText(extractedText);
+    
+    const extractedData: ExtractedPDFData = {
+      sections,
+      rawText: extractedText,
+      products,
+    };
 
-      return NextResponse.json({
-        success: true,
-        products,
-        text: extractedText,
-      });
+    return NextResponse.json({
+      success: true,
+      data: extractedData,
+      sections,
+      products,
+      text: extractedText,
+    });
   } catch (error: any) {
     console.error('Erro ao processar PDF:', error);
     console.error('Stack:', error.stack);

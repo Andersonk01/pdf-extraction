@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Product } from '@/lib/pdf-extractor';
+import { Product, PDFSection } from '@/lib/pdf-extractor';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
+  const [sections, setSections] = useState<PDFSection[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>('');
 
@@ -15,6 +16,7 @@ export default function Home() {
       setFile(e.target.files[0]);
       setFileName(e.target.files[0].name);
       setProducts([]);
+      setSections([]);
       setError(null);
     }
   };
@@ -28,6 +30,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setProducts([]);
+    setSections([]);
 
     try {
       const formData = new FormData();
@@ -44,10 +47,17 @@ export default function Home() {
         throw new Error(data.error || 'Erro ao processar PDF');
       }
 
-      if (data.products && data.products.length > 0) {
+      // Atualizar produtos e seções
+      if (data.products) {
         setProducts(data.products);
-      } else {
-        setError('Nenhum produto encontrado no PDF. Verifique se o formato está correto.');
+      }
+      if (data.sections) {
+        setSections(data.sections);
+      }
+      
+      // Se não há seções, mostrar aviso
+      if (!data.sections || data.sections.length === 0) {
+        setError('Nenhuma seção foi identificada no PDF. O arquivo pode estar em um formato não suportado.');
       }
     } catch (err: any) {
       setError(err.message || 'Erro ao processar o arquivo');
@@ -137,6 +147,167 @@ export default function Home() {
           )}
         </div>
 
+        {/* Seção de Produtos/Serviços - Destacada */}
+        {sections.find(s => s.name === 'Dados dos Produtos/Serviços') && (
+          <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg p-6 mb-6 border-2 border-green-500">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold text-green-600 dark:text-green-400">
+                📋 Dados dos Produtos/Serviços
+              </h2>
+              <button
+                onClick={() => {
+                  const produtosSection = sections.find(s => s.name === 'Dados dos Produtos/Serviços');
+                  if (produtosSection) {
+                    const content = produtosSection.lines.join('\n');
+                    navigator.clipboard.writeText(content);
+                    alert('Conteúdo copiado para a área de transferência! Cole no Excel.');
+                  }
+                }}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                📋 Copiar para Excel
+              </button>
+            </div>
+            
+            {(() => {
+              const produtosSection = sections.find(s => s.name === 'Dados dos Produtos/Serviços');
+              if (!produtosSection) return null;
+              
+              return (
+                <div className="space-y-3">
+                  {/* Conteúdo completo formatado */}
+                  <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 border border-green-200 dark:border-green-800">
+                    <div className="flex justify-between items-center mb-3">
+                      <p className="text-sm font-medium text-green-800 dark:text-green-200">
+                        Conteúdo completo ({produtosSection.lines.length} linhas)
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            const content = produtosSection.lines.join('\n');
+                            navigator.clipboard.writeText(content);
+                            alert('✅ Todo o conteúdo copiado! Cole no Excel.');
+                          }}
+                          className="text-xs px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                        >
+                          📋 Copiar Tudo
+                        </button>
+                        <button
+                          onClick={() => {
+                            const content = produtosSection.lines.join('\n');
+                            const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
+                            const link = document.createElement('a');
+                            const url = URL.createObjectURL(blob);
+                            link.setAttribute('href', url);
+                            link.setAttribute('download', `${fileName.replace('.pdf', '')}_produtos_servicos.txt`);
+                            link.style.visibility = 'hidden';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          }}
+                          className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                        >
+                          💾 Baixar TXT
+                        </button>
+                      </div>
+                    </div>
+                    <div className="bg-white dark:bg-zinc-800 rounded p-4 max-h-96 overflow-y-auto border border-green-200 dark:border-green-700">
+                      <pre className="text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre font-mono leading-relaxed">
+                        {produtosSection.lines.join('\n')}
+                      </pre>
+                    </div>
+                  </div>
+                  
+                  {/* Visualização em linhas separadas - formatada para Excel */}
+                  <div className="bg-zinc-50 dark:bg-zinc-800 rounded-lg p-4">
+                    <div className="flex justify-between items-center mb-3">
+                      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        Linhas formatadas para Excel (clique para copiar):
+                      </p>
+                      <button
+                        onClick={() => {
+                          // Converter tabs para vírgulas para Excel
+                          const excelContent = produtosSection.lines
+                            .map(line => line.replace(/\t/g, ',').replace(/\s{2,}/g, ','))
+                            .join('\n');
+                          navigator.clipboard.writeText(excelContent);
+                          alert('✅ Conteúdo formatado para Excel copiado! Cole diretamente no Excel.');
+                        }}
+                        className="text-xs px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                      >
+                        📊 Copiar como CSV
+                      </button>
+                    </div>
+                    <div className="space-y-1 max-h-96 overflow-y-auto">
+                      {produtosSection.lines.map((line, idx) => {
+                        // Detectar se é cabeçalho
+                        const isHeader = /^(CÓDIGO|DESCRIÇÃO|NCM|DADOS)/i.test(line);
+                        // Detectar se é linha de produto (começa com números)
+                        const isProduct = /^(\d{8}|\d{2,3})\s+/.test(line);
+                        
+                        return (
+                          <div
+                            key={idx}
+                            onClick={() => {
+                              // Converter tabs para vírgulas se necessário
+                              const excelLine = line.replace(/\t/g, ',').replace(/\s{2,}/g, ',');
+                              navigator.clipboard.writeText(excelLine);
+                              alert('✅ Linha copiada!');
+                            }}
+                            className={`p-2 rounded border cursor-pointer transition-colors text-xs font-mono ${
+                              isHeader 
+                                ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700 hover:bg-blue-100 dark:hover:bg-blue-900/30 font-bold text-blue-800 dark:text-blue-200' 
+                                : isProduct
+                                ? 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 hover:bg-green-50 dark:hover:bg-green-900/20 hover:border-green-300 dark:hover:border-green-700 text-zinc-700 dark:text-zinc-300'
+                                : 'bg-zinc-100 dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                            }`}
+                            title="Clique para copiar esta linha (formatada para Excel)"
+                          >
+                            {line}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Outras Seções */}
+        {sections.filter(s => s.name !== 'Dados dos Produtos/Serviços').length > 0 && (
+          <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg p-6 mb-6">
+            <h2 className="text-2xl font-bold text-black dark:text-zinc-50 mb-4">
+              Outras Seções ({sections.filter(s => s.name !== 'Dados dos Produtos/Serviços').length})
+            </h2>
+            
+            <div className="space-y-4">
+              {sections
+                .filter(s => s.name !== 'Dados dos Produtos/Serviços')
+                .map((section, index) => (
+                  <div
+                    key={index}
+                    className="border border-zinc-300 dark:border-zinc-700 rounded-lg p-4"
+                  >
+                    <h3 className="font-semibold text-lg text-black dark:text-zinc-50 mb-2">
+                      {section.name}
+                    </h3>
+                    <div className="bg-zinc-50 dark:bg-zinc-800 rounded p-3 max-h-60 overflow-y-auto">
+                      <pre className="text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap font-mono">
+                        {section.content || section.lines.join('\n')}
+                      </pre>
+                    </div>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2">
+                      {section.lines.length} linha(s)
+                    </p>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Produtos Extraídos */}
         {products.length > 0 && (
           <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg p-6">
             <div className="flex justify-between items-center mb-4">
